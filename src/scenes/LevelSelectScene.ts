@@ -1,10 +1,10 @@
 import * as Phaser from 'phaser';
 
-import { calmStyleStore } from '../game/calmStyles';
+import { CALM_BACKGROUNDS, calmStyleStore, setCalmBackgroundStyle } from '../game/calmStyles';
 import { AUDIO_KEYS, playAudioCue } from '../game/core/audio';
 import { STAGE_DEFINITIONS } from '../game/stageConfig';
 import { createSelectionCard, type SelectionCard } from '../game/ui';
-import { SCENE_KEYS, type MatchMode } from '../game/types';
+import { SCENE_KEYS, type CalmBackgroundId, type MatchMode } from '../game/types';
 import { BaseScene } from './BaseScene';
 
 interface LevelSelectData {
@@ -119,10 +119,14 @@ export class LevelSelectScene extends BaseScene {
 
   private confirm(index: number): void {
     this.setSelection(index);
+    const stage = STAGE_DEFINITIONS[index];
+    if (CALM_BACKGROUNDS.some((bg) => bg.id === stage.id)) {
+      setCalmBackgroundStyle(stage.id as CalmBackgroundId);
+    }
     playAudioCue(this, AUDIO_KEYS.uiConfirm, this.app.settingsStore.getState());
     this.scene.start(SCENE_KEYS.CharacterSelect, {
       mode: this.mode,
-      stageId: STAGE_DEFINITIONS[index].id
+      stageId: stage.id
     });
   }
 }

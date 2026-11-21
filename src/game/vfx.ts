@@ -122,6 +122,98 @@ export function spawnChargeAura(scene: Phaser.Scene, x: number, y: number, color
 }
 
 /**
+ * Spawns discipline-authentic special move visual effects:
+ * - Judo: heavy floor tatami slam shockwave ellipses, rising dust, and throw burst.
+ * - Taekwondo: spinning tornado wind rings and high angled kick streaks.
+ */
+export function spawnDisciplineSpecialFx(
+  scene: Phaser.Scene,
+  x: number,
+  groundY: number,
+  facing: 1 | -1,
+  discipline: 'judo' | 'taekwondo',
+  phase: 'launch' | 'climax'
+): void {
+  if (discipline === 'judo') {
+    if (phase === 'launch') {
+      spawnDustPuff(scene, x, groundY - 10, (-facing) as -1 | 1, 5);
+      const dash = scene.add
+        .rectangle(x + facing * 18, groundY - 82, 54, 6, 0x38bdf8, 0.8)
+        .setDepth(VFX_DEPTH - 2);
+      scene.tweens.add({
+        targets: dash,
+        x: dash.x + facing * 42,
+        scaleX: 1.8,
+        alpha: 0,
+        duration: 240,
+        ease: 'Cubic.Out',
+        onComplete: () => dash.destroy()
+      });
+      return;
+    }
+
+    // Judo Ippon mat slam shockwave
+    spawnDustPuff(scene, x + facing * 34, groundY - 8, facing, 6);
+    [0x38bdf8, 0xfacc15].forEach((tint, i) => {
+      const shock = scene.add
+        .ellipse(x + facing * 32, groundY - 12, 46, 14, tint, 0)
+        .setStrokeStyle(4 - i, tint, 0.95)
+        .setDepth(VFX_DEPTH);
+      scene.tweens.add({
+        targets: shock,
+        scaleX: 3.1 + i * 0.7,
+        scaleY: 2.2 + i * 0.4,
+        alpha: 0,
+        delay: i * 55,
+        duration: 360,
+        ease: 'Cubic.Out',
+        onComplete: () => shock.destroy()
+      });
+    });
+    return;
+  }
+
+  // Taekwondo spinning tornado wind & crimson-sky kick streaks
+  if (phase === 'launch') {
+    for (let i = 0; i < 3; i += 1) {
+      const vortex = scene.add
+        .ellipse(x, groundY - 46 - i * 34, 68 + i * 10, 16, i % 2 === 0 ? 0xf87171 : 0x38bdf8, 0)
+        .setStrokeStyle(3, i % 2 === 0 ? 0xf87171 : 0xfacc15, 0.9)
+        .setAngle(facing * -14)
+        .setDepth(VFX_DEPTH);
+      scene.tweens.add({
+        targets: vortex,
+        y: vortex.y - 32,
+        scaleX: 1.65,
+        alpha: 0,
+        delay: i * 70,
+        duration: 340,
+        ease: 'Quad.Out',
+        onComplete: () => vortex.destroy()
+      });
+    }
+    return;
+  }
+
+  // Taekwondo finisher crescent flash
+  for (let i = 0; i < 2; i += 1) {
+    const slash = scene.add
+      .rectangle(x + facing * 38, groundY - 118 + i * 18, 86, 7, i === 0 ? 0xfacc15 : 0xf43f5e, 0.92)
+      .setAngle(facing * (-28 + i * 44))
+      .setDepth(VFX_DEPTH + 1);
+    scene.tweens.add({
+      targets: slash,
+      x: slash.x + facing * 26,
+      scaleX: 1.45,
+      alpha: 0,
+      duration: 240,
+      ease: 'Cubic.Out',
+      onComplete: () => slash.destroy()
+    });
+  }
+}
+
+/**
  * Spawns subtle tatami/floor dust wisps around the feet on jump takeoff,
  * landing, dash lunges, and knockdowns for grounded physical weight.
  */
@@ -150,6 +242,63 @@ export function spawnDustPuff(
       duration: Phaser.Math.Between(220, 320),
       ease: 'Cubic.Out',
       onComplete: () => puff.destroy()
+    });
+  }
+}
+
+/**
+ * Spawns celebratory golden shockwave rings and rising confetti sparks around
+ * the match winner during the post-match victory animation.
+ */
+export function spawnVictoryBurst(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  accentColor = 0x38bdf8
+): void {
+  const ringColors = [0xfacc15, accentColor, 0xfef08a];
+
+  ringColors.forEach((color, idx) => {
+    const ring = scene.add
+      .circle(x, y, 24, color, 0)
+      .setStrokeStyle(4, color, 0.9)
+      .setDepth(VFX_DEPTH - 2)
+      .setScrollFactor(1)
+      .setScale(0.3);
+
+    scene.tweens.add({
+      targets: ring,
+      scale: 3.2 + idx * 0.45,
+      alpha: 0,
+      delay: idx * 120,
+      duration: 680,
+      ease: 'Cubic.Out',
+      onComplete: () => ring.destroy()
+    });
+  });
+
+  const sparkColors = [0xfacc15, 0xfef08a, accentColor, 0xffffff, 0xfb7185];
+  for (let i = 0; i < 22; i += 1) {
+    const angle = Phaser.Math.FloatBetween(-Math.PI * 0.92, -Math.PI * 0.08);
+    const speed = Phaser.Math.Between(90, 230);
+    const color = sparkColors[i % sparkColors.length];
+    const size = Phaser.Math.Between(4, 7);
+    const spark = scene.add
+      .rectangle(x + Phaser.Math.Between(-24, 24), y + Phaser.Math.Between(-20, 20), size, size, color, 0.95)
+      .setDepth(VFX_DEPTH + 1)
+      .setScrollFactor(1);
+
+    scene.tweens.add({
+      targets: spark,
+      x: spark.x + Math.cos(angle) * speed,
+      y: spark.y + Math.sin(angle) * speed * 0.9 - Phaser.Math.Between(20, 60),
+      angle: Phaser.Math.Between(-260, 260),
+      alpha: 0,
+      scale: 0.4,
+      delay: Phaser.Math.Between(0, 220),
+      duration: Phaser.Math.Between(650, 1100),
+      ease: 'Cubic.Out',
+      onComplete: () => spark.destroy()
     });
   }
 }

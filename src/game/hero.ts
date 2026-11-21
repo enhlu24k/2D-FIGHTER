@@ -135,11 +135,11 @@ export function defaultHeroBoundsForActivation(frame: HeroBoundsFrame, kind: Cha
   }
 
   if (kind === 'attack') {
-    return rect(28, 86, 76, 48);
+    return rect(44, 88, 58, 28);
   }
 
   if (kind === 'guard') {
-    return rect(64, 48, 128, 112);
+    return rect(74, 62, 76, 92);
   }
 
   return frame.visual;

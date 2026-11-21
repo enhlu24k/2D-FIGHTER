@@ -404,13 +404,43 @@ export const MARTIAL_ROSTER_META: MartialCharacterMeta[] = [
     statBars: { speed: 82, power: 90, vitality: 88 },
     stats: { walkSpeed: 248, airDrift: 210, jump: 1040, scale: 1.44 },
     combat: { maxHealth: 114, highDamage: 8, lowDamage: 15, specialDamage: 9 }
+  },
+
+  // ────────────────────── SPECIAL CHALLENGER ──────────────────────
+  {
+    id: 'guest-challenger',
+    label: 'Challenger',
+    country: 'DOJO',
+    division: 'Taekwondo · Rising Star',
+    discipline: 'taekwondo',
+    archetype: 'All-Round Striker',
+    specialName: 'V-Sign Hurricane',
+    build: 'lean',
+    accentHex: '#facc15',
+    portraitUrl: '/assets/aistudio/mdku_ddd80e8b.webp',
+    portraitCrop: { cx: 0.525, cy: 0.26, scale: 0.42, flipX: false },
+    appearance: {
+      giColor: '#f8fafc',
+      giShade: '#cbd5e1',
+      trimColor: '#111827',
+      beltColor: '#0f172a',
+      hoguColor: '#111827',
+      skin: '#efc2a0',
+      skinShade: '#cc9773',
+      hair: '#111827',
+      hairStyle: 'bun',
+      facialHair: 'none'
+    },
+    statBars: { speed: 90, power: 84, vitality: 86 },
+    stats: { walkSpeed: 268, airDrift: 225, jump: 1080, scale: 1.38 },
+    combat: { maxHealth: 108, highDamage: 8, lowDamage: 14, specialDamage: 8 }
   }
 ];
 
 function createMartialActions(meta: MartialCharacterMeta): FighterActionSpec[] {
   const isHeavy = meta.build === 'heavy';
-  const standingVisual = isHeavy ? rect(58, 20, 140, 212) : rect(72, 28, 112, 204);
-  const crouchVisual = isHeavy ? rect(58, 92, 140, 140) : rect(70, 102, 116, 130);
+  const standingVisual = isHeavy ? rect(62, 56, 132, 174) : rect(70, 57, 116, 172);
+  const crouchVisual = isHeavy ? rect(58, 102, 140, 128) : rect(66, 106, 124, 124);
 
   return [
     {
@@ -456,7 +486,7 @@ function createMartialActions(meta: MartialCharacterMeta): FighterActionSpec[] {
       frames: 5,
       frameRate: 11,
       repeat: 0,
-      defaultVisual: rect(66, 16, 124, 204)
+      defaultVisual: rect(66, 46, 124, 172)
     },
     {
       action: 'block-high',
@@ -466,7 +496,7 @@ function createMartialActions(meta: MartialCharacterMeta): FighterActionSpec[] {
       frameRate: 12,
       repeat: 0,
       defaultVisual: standingVisual,
-      guard: rect(56, 40, 144, 122)
+      guard: rect(62, 54, 118, 146)
     },
     {
       action: 'block-low',
@@ -476,7 +506,7 @@ function createMartialActions(meta: MartialCharacterMeta): FighterActionSpec[] {
       frameRate: 12,
       repeat: 0,
       defaultVisual: crouchVisual,
-      guard: rect(56, 108, 144, 122)
+      guard: rect(62, 98, 118, 130)
     },
     {
       action: 'hit-high',
@@ -494,8 +524,8 @@ function createMartialActions(meta: MartialCharacterMeta): FighterActionSpec[] {
       frames: 6,
       frameRate: 16,
       repeat: 0,
-      defaultVisual: rect(52, 26, 148, 206),
-      attack: { frames: [2, 3], bounds: rect(14, 72, 98, 56) }
+      defaultVisual: rect(30, 57, 162, 172),
+      attack: { frames: [2, 3], bounds: rect(26, 78, 98, 62) }
     },
     {
       action: 'heavy-kick',
@@ -504,8 +534,11 @@ function createMartialActions(meta: MartialCharacterMeta): FighterActionSpec[] {
       frames: 7,
       frameRate: 14,
       repeat: 0,
-      defaultVisual: rect(40, 24, 168, 208),
-      attack: { frames: [2, 3, 4], bounds: rect(6, 56, 120, 88) }
+      defaultVisual: rect(24, 54, 170, 175),
+      attack: {
+        frames: [2, 3, 4],
+        bounds: meta.discipline === 'judo' ? rect(22, 92, 108, 116) : rect(20, 62, 110, 96)
+      }
     },
     {
       action: 'special-charge',
@@ -523,11 +556,11 @@ function createMartialActions(meta: MartialCharacterMeta): FighterActionSpec[] {
       frames: 9,
       frameRate: 15,
       repeat: 0,
-      defaultVisual: rect(20, 18, 208, 214),
+      defaultVisual: rect(22, 52, 176, 178),
       attackSpans: [
-        { frames: [1, 2], bounds: rect(8, 60, 126, 118) },
-        { frames: [4, 5], bounds: rect(6, 48, 134, 130) },
-        { frames: [6, 7], bounds: rect(4, 34, 142, 148) }
+        { frames: [1, 2], bounds: rect(20, 56, 112, 146) },
+        { frames: [4, 5], bounds: rect(16, 48, 118, 156) },
+        { frames: [6, 7], bounds: rect(12, 44, 124, 164) }
       ]
     },
     {
@@ -537,7 +570,16 @@ function createMartialActions(meta: MartialCharacterMeta): FighterActionSpec[] {
       frames: 6,
       frameRate: 11,
       repeat: 0,
-      defaultVisual: rect(38, 144, 180, 88)
+      defaultVisual: rect(48, 148, 168, 84)
+    },
+    {
+      action: 'victory',
+      label: 'Victory',
+      file: 'victory.png',
+      frames: 6,
+      frameRate: 9,
+      repeat: -1,
+      defaultVisual: standingVisual
     }
   ];
 }

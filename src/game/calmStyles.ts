@@ -198,12 +198,18 @@ export interface SuitStyleDefinition {
   label: string;
   tint: number;
   accentCss: string;
+  clothRgb: [number, number, number];
 }
 
 export const SUIT_STYLES: SuitStyleDefinition[] = [
-  { id: 'classic', label: 'Classic', tint: 0xffffff, accentCss: '#e2e8f0' },
-  { id: 'stealth', label: 'Slate', tint: 0x94a3b8, accentCss: '#94a3b8' },
-  { id: 'cosmic', label: 'Ivory', tint: 0xfef3c7, accentCss: '#fde68a' }
+  { id: 'classic', label: 'Classic', tint: 0xffffff, accentCss: '#e2e8f0', clothRgb: [242, 246, 252] },
+  { id: 'pink', label: 'Pink', tint: 0xf472b6, accentCss: '#f472b6', clothRgb: [244, 114, 182] },
+  { id: 'orange', label: 'Orange', tint: 0xfb923c, accentCss: '#fb923c', clothRgb: [249, 115, 22] },
+  { id: 'black', label: 'Black', tint: 0x475569, accentCss: '#64748b', clothRgb: [44, 50, 62] },
+  { id: 'grey', label: 'Grey', tint: 0x94a3b8, accentCss: '#94a3b8', clothRgb: [148, 163, 184] },
+  { id: 'crimson', label: 'Red', tint: 0xef4444, accentCss: '#f87171', clothRgb: [224, 48, 58] },
+  { id: 'royal', label: 'Blue', tint: 0x3b82f6, accentCss: '#60a5fa', clothRgb: [46, 114, 232] },
+  { id: 'gold', label: 'Gold', tint: 0xfacc15, accentCss: '#facc15', clothRgb: [234, 179, 8] }
 ];
 
 export function getCalmBackgroundDefinition(id: string | undefined): CalmBackgroundDefinition {

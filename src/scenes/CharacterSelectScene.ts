@@ -13,6 +13,8 @@ import {
 import { AUDIO_KEYS, playAudioCue } from '../game/core/audio';
 import { FIGHTER_CHARACTER_DEFINITIONS, type CharacterDefinition } from '../game/hero';
 import { getMartialCharacterMeta } from '../game/martialRoster';
+import { ensureUniformCharacterAnimations } from '../game/martialSprites';
+import { STAGE_DEFINITIONS } from '../game/stageConfig';
 import {
   SCENE_KEYS,
   type CalmBackgroundId,
@@ -30,9 +32,9 @@ interface CharacterSelectData {
 
 const GRID_COLS = 4;
 const CARD_W = 124;
-const CARD_H = 152;
+const CARD_H = 124;
 const CARD_GAP_X = 12;
-const CARD_GAP_Y = 14;
+const CARD_GAP_Y = 10;
 
 const P1_COLOR = 0x38bdf8;
 const P1_CSS = '#38bdf8';
@@ -56,6 +58,8 @@ interface SpotlightPanelView {
   statusText: Phaser.GameObjects.Text;
   portrait: Phaser.GameObjects.Image;
   portraitFrame: Phaser.GameObjects.Rectangle;
+  uniformPreview: Phaser.GameObjects.Sprite;
+  uniformPreviewFrame: Phaser.GameObjects.Rectangle;
   heroName: Phaser.GameObjects.Text;
   aliasTeam: Phaser.GameObjects.Text;
   archetypeText: Phaser.GameObjects.Text;
@@ -67,8 +71,9 @@ interface SpotlightPanelView {
   pwrVal: Phaser.GameObjects.Text;
   vitVal: Phaser.GameObjects.Text;
   styleDesc: Phaser.GameObjects.Text;
+  suitDesc: Phaser.GameObjects.Text;
   combatButtons: Map<CombatStyleId, { bg: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text }>;
-  suitButtons: Map<SuitStyleId, { bg: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text }>;
+  suitButtons: Map<SuitStyleId, { bg: Phaser.GameObjects.Rectangle; swatch: Phaser.GameObjects.Arc; label: Phaser.GameObjects.Text }>;
   lockBtnBg: Phaser.GameObjects.Rectangle;
   lockBtnText: Phaser.GameObjects.Text;
 }
@@ -156,8 +161,8 @@ export class CharacterSelectScene extends BaseScene {
 
     const controlsHint =
       this.mode === '1v1'
-        ? 'P1: WASD + Space/F   •   P2: Arrows + Enter   •   Q/E: Calm Backdrop   •   1-4: Style   •   Esc: Back'
-        : 'WASD / Arrows / Click: Pick Fighter   •   Space / Enter: Lock In   •   Q/E: Calm Backdrop   •   Esc: Back';
+        ? 'P1: WASD + Space/F   •   P2: Arrows + Enter   •   Q/E: Backdrop   •   U / O: P1/P2 Uniform   •   Esc: Back'
+        : 'WASD / Arrows / Click: Pick Fighter   •   Space / Enter: Lock In   •   Q/E: Backdrop   •   U: Uniform   •   Esc: Back';
     this.createFooterHint(controlsHint);
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -288,6 +293,7 @@ export class CharacterSelectScene extends BaseScene {
 
       bg.on('pointerdown', () => {
         setCalmBackgroundStyle(bgDef.id);
+        this.syncStageWithBackdrop(bgDef.id);
         playAudioCue(this, AUDIO_KEYS.uiConfirm, this.app.settingsStore.getState());
         this.toggleBgDropdown(false);
       });
@@ -352,10 +358,14 @@ export class CharacterSelectScene extends BaseScene {
     this.roster.forEach((character, index) => {
       const col = index % GRID_COLS;
       const row = Math.floor(index / GRID_COLS);
-      const x = startX + col * (CARD_W + CARD_GAP_X);
+      const isLastRow = row === rows - 1;
+      const itemsInLastRow = this.roster.length % GRID_COLS || GRID_COLS;
+      const lastRowW = itemsInLastRow * CARD_W + (itemsInLastRow - 1) * CARD_GAP_X;
+      const rowStartX = isLastRow && itemsInLastRow < GRID_COLS ? centerX - lastRowW / 2 + CARD_W / 2 : startX;
+      const x = rowStartX + col * (CARD_W + CARD_GAP_X);
       const y = startY + row * (CARD_H + CARD_GAP_Y);
       const meta = getMartialCharacterMeta(character.id);
-      const accentInt = meta.discipline === 'judo' ? 0x38bdf8 : 0xf87171;
+      const accentInt = meta.id === 'guest-challenger' ? 0xfacc15 : meta.discipline === 'judo' ? 0x38bdf8 : 0xf87171;
 
       const bg = this.add
         .rectangle(0, 0, CARD_W, CARD_H, 0x0f172a, 0.88)
@@ -366,15 +376,15 @@ export class CharacterSelectScene extends BaseScene {
       const children: Phaser.GameObjects.GameObject[] = [bg, accentBar];
 
       if (this.textures.exists(character.portrait.key)) {
-        const portrait = this.add.image(0, -18, character.portrait.key).setOrigin(0.5);
-        const maxSize = 86;
+        const portrait = this.add.image(0, -16, character.portrait.key).setOrigin(0.5);
+        const maxSize = 68;
         const srcSize = Math.max(portrait.width, portrait.height) || maxSize;
         portrait.setScale(maxSize / srcSize);
         children.push(portrait);
       }
 
       const title = this.add
-        .text(0, CARD_H / 2 - 33, character.label, {
+        .text(0, CARD_H / 2 - 28, character.label, {
           color: '#f8fafc',
           fontFamily: 'monospace',
           fontStyle: 'bold',
@@ -384,7 +394,7 @@ export class CharacterSelectScene extends BaseScene {
         .setOrigin(0.5);
 
       const subtitle = this.add
-        .text(0, CARD_H / 2 - 15, `${meta.country} · ${meta.discipline === 'judo' ? 'Judo' : 'Taekwondo'}`, {
+        .text(0, CARD_H / 2 - 12, `${meta.country} · ${meta.discipline === 'judo' ? 'Judo' : 'Taekwondo'}`, {
           color: '#94a3b8',
           fontFamily: 'monospace',
           fontSize: '10px',
@@ -519,13 +529,29 @@ export class CharacterSelectScene extends BaseScene {
 
     root.add([headerBadge, statusText]);
 
-    // Portrait box
+    // Portrait box (left) + Live recolored uniform mini-sprite preview (right)
     const portraitY = -H / 2 + 96;
     const portraitFrame = this.add
-      .rectangle(0, portraitY, 122, 122, 0x111827, 0.95)
+      .rectangle(-56, portraitY, 108, 108, 0x111827, 0.95)
       .setStrokeStyle(2, 0x334155, 1);
-    const portrait = this.add.image(0, portraitY, this.roster[0]?.portrait.key ?? '').setFlipX(isP1);
-    root.add([portraitFrame, portrait]);
+    const portrait = this.add.image(-56, portraitY, this.roster[0]?.portrait.key ?? '').setFlipX(isP1);
+
+    const uniformPreviewFrame = this.add
+      .rectangle(56, portraitY, 108, 108, 0x111827, 0.95)
+      .setStrokeStyle(2, 0x334155, 1);
+    const firstChar = this.roster[0];
+    const firstAnimKey = firstChar?.animations[0]?.key ?? '';
+    const firstSheetKey = firstChar?.animations[0]?.sheet.key ?? '';
+    const uniformPreview = this.add
+      .sprite(56, portraitY + 48, firstSheetKey)
+      .setOrigin(0.5, 1)
+      .setScale(0.54)
+      .setFlipX(isP1);
+    if (firstAnimKey && this.anims.exists(firstAnimKey)) {
+      uniformPreview.play(firstAnimKey);
+    }
+
+    root.add([portraitFrame, portrait, uniformPreviewFrame, uniformPreview]);
 
     // Hero Name + Alias + Special
     const heroName = this.add
@@ -653,10 +679,10 @@ export class CharacterSelectScene extends BaseScene {
       combatButtons.set(st.id, { bg, label });
     });
 
-    // Uniform Tone section
+    // Uniform Color section (4x2 palette grid with swatches)
     root.add(
       this.add
-        .text(-W / 2 + 18, -H / 2 + 422, 'UNIFORM TONE', {
+        .text(-W / 2 + 18, -H / 2 + 416, 'UNIFORM COLOR (U)', {
           color: '#cbd5e1',
           fontFamily: 'monospace',
           fontStyle: 'bold',
@@ -665,24 +691,47 @@ export class CharacterSelectScene extends BaseScene {
         .setOrigin(0, 0.5)
     );
 
-    const suitButtons = new Map<SuitStyleId, { bg: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text }>();
-    const sbW = 88;
-    const sbH = 26;
+    const suitDesc = this.add
+      .text(W / 2 - 18, -H / 2 + 416, '', {
+        color: '#e2e8f0',
+        fontFamily: 'monospace',
+        fontStyle: 'bold',
+        fontSize: '10px'
+      })
+      .setOrigin(1, 0.5);
+    root.add(suitDesc);
+
+    const suitButtons = new Map<
+      SuitStyleId,
+      { bg: Phaser.GameObjects.Rectangle; swatch: Phaser.GameObjects.Arc; label: Phaser.GameObjects.Text }
+    >();
+    const sbCols = 4;
+    const sbW = 66;
+    const sbH = 22;
+    const sbGapX = 6;
+    const sbGapY = 4;
+    const sbStartX = -((sbCols - 1) * (sbW + sbGapX)) / 2;
+
     SUIT_STYLES.forEach((suit, idx) => {
-      const bx = (idx - 1) * (sbW + 8);
-      const by = -H / 2 + 448;
+      const col = idx % sbCols;
+      const row = Math.floor(idx / sbCols);
+      const bx = sbStartX + col * (sbW + sbGapX);
+      const by = -H / 2 + 440 + row * (sbH + sbGapY);
       const bg = this.add
         .rectangle(bx, by, sbW, sbH, 0x111827, 0.95)
         .setStrokeStyle(1.5, 0x334155, 1)
         .setInteractive({ useHandCursor: true });
+      const swatch = this.add
+        .circle(bx - sbW / 2 + 10, by, 4.5, suit.tint, 1)
+        .setStrokeStyle(1, 0xf8fafc, 0.5);
       const label = this.add
-        .text(bx, by, suit.label, {
+        .text(bx - sbW / 2 + 19, by, suit.label, {
           color: '#cbd5e1',
           fontFamily: 'monospace',
-          fontSize: '11px',
+          fontSize: '10px',
           fontStyle: 'bold'
         })
-        .setOrigin(0.5);
+        .setOrigin(0, 0.5);
 
       bg.on('pointerdown', () => {
         if (this.transitioning) {
@@ -700,8 +749,8 @@ export class CharacterSelectScene extends BaseScene {
         this.refreshPanel(side);
       });
 
-      root.add([bg, label]);
-      suitButtons.set(suit.id, { bg, label });
+      root.add([bg, swatch, label]);
+      suitButtons.set(suit.id, { bg, swatch, label });
     });
 
     // Lock In Button
@@ -738,6 +787,8 @@ export class CharacterSelectScene extends BaseScene {
       statusText,
       portrait,
       portraitFrame,
+      uniformPreview,
+      uniformPreviewFrame,
       heroName,
       aliasTeam,
       archetypeText,
@@ -749,6 +800,7 @@ export class CharacterSelectScene extends BaseScene {
       pwrVal: pwr.val,
       vitVal: vit.val,
       styleDesc,
+      suitDesc,
       combatButtons,
       suitButtons,
       lockBtnBg,
@@ -772,13 +824,23 @@ export class CharacterSelectScene extends BaseScene {
 
     if (this.textures.exists(char.portrait.key)) {
       panel.portrait.setTexture(char.portrait.key).setVisible(true);
-      const maxSize = 112;
+      const maxSize = 98;
       const srcSize = Math.max(panel.portrait.width, panel.portrait.height) || maxSize;
       panel.portrait.setScale(maxSize / srcSize);
       panel.portrait.clearTint();
       panel.portraitFrame.setStrokeStyle(2, suitDef.tint, 1);
     } else {
       panel.portrait.setVisible(false);
+    }
+
+    const suitSuffix = ensureUniformCharacterAnimations(this, char.id, cursor.style.suit);
+    const previewAnimKey = `${char.id}-idle${suitSuffix}`;
+    if (this.anims.exists(previewAnimKey)) {
+      panel.uniformPreview.setVisible(true).setScale(0.54).setFlipX(isP1);
+      panel.uniformPreview.play(previewAnimKey, true);
+      panel.uniformPreviewFrame.setStrokeStyle(2, suitDef.tint, 1);
+    } else {
+      panel.uniformPreview.setVisible(false);
     }
 
     const waitingCpu = !isP1 && this.mode === '1vcpu' && !this.p1.locked && !cursor.locked;
@@ -817,6 +879,9 @@ export class CharacterSelectScene extends BaseScene {
       btn.label.setColor(selected ? '#ffffff' : '#94a3b8');
     });
 
+    panel.suitDesc.setText(`${suitDef.label.toUpperCase()} GI`);
+    panel.suitDesc.setColor(suitDef.accentCss);
+
     SUIT_STYLES.forEach((suit) => {
       const btn = panel.suitButtons.get(suit.id);
       if (!btn) {
@@ -824,7 +889,8 @@ export class CharacterSelectScene extends BaseScene {
       }
       const selected = cursor.style.suit === suit.id;
       btn.bg.setFillStyle(selected ? 0x1e293b : 0x111827, 0.96);
-      btn.bg.setStrokeStyle(selected ? 2 : 1, selected ? accent : 0x334155, 1);
+      btn.bg.setStrokeStyle(selected ? 2 : 1, selected ? suit.tint : 0x334155, 1);
+      btn.swatch.setScale(selected ? 1.2 : 1);
       btn.label.setColor(selected ? '#ffffff' : '#94a3b8');
     });
 
@@ -880,6 +946,17 @@ export class CharacterSelectScene extends BaseScene {
       event.preventDefault();
       this.cycleCombatStyle(this.p1, 'p1');
     });
+    keyboard.on('keydown-U', () => this.cycleSuitStyle(this.p1, 'p1'));
+    keyboard.on('keydown-I', () => {
+      if (this.mode === '1v1') {
+        this.cycleCombatStyle(this.p2, 'p2');
+      }
+    });
+    keyboard.on('keydown-O', () => {
+      if (this.mode === '1v1') {
+        this.cycleSuitStyle(this.p2, 'p2');
+      }
+    });
     keyboard.on('keydown-ONE', () => this.setCombatStyleByIndex(this.p1, 'p1', 0));
     keyboard.on('keydown-TWO', () => this.setCombatStyleByIndex(this.p1, 'p1', 1));
     keyboard.on('keydown-THREE', () => this.setCombatStyleByIndex(this.p1, 'p1', 2));
@@ -889,17 +966,43 @@ export class CharacterSelectScene extends BaseScene {
     keyboard.on('keydown-BACKSPACE', () => this.goBack());
   }
 
+  private cycleSuitStyle(cursor: PlayerSelectionState, side: 'p1' | 'p2'): void {
+    if (this.transitioning || cursor.locked) {
+      return;
+    }
+    if (side === 'p2') {
+      this.p2StyleTouched = true;
+    }
+    const idx = SUIT_STYLES.findIndex((s) => s.id === cursor.style.suit);
+    const nextIdx = Phaser.Math.Wrap(idx + 1, 0, SUIT_STYLES.length);
+    cursor.style.suit = SUIT_STYLES[nextIdx].id;
+    playAudioCue(this, AUDIO_KEYS.uiConfirm, this.app.settingsStore.getState());
+    this.refreshPanel(side);
+  }
+
+  private syncStageWithBackdrop(bgId: CalmBackgroundId): void {
+    const matchingStage = STAGE_DEFINITIONS.find((s) => s.id === bgId);
+    if (matchingStage) {
+      this.stageId = matchingStage.id;
+    }
+  }
+
   private cycleCalmBackground(delta: number): void {
     const currentId = calmStyleStore.getState().backgroundId;
     const idx = CALM_BACKGROUNDS.findIndex((b) => b.id === currentId);
     const nextIdx = Phaser.Math.Wrap((idx === -1 ? 0 : idx) + delta, 0, CALM_BACKGROUNDS.length);
-    setCalmBackgroundStyle(CALM_BACKGROUNDS[nextIdx].id);
+    const nextBgId = CALM_BACKGROUNDS[nextIdx].id;
+    setCalmBackgroundStyle(nextBgId);
+    this.syncStageWithBackdrop(nextBgId);
     playAudioCue(this, AUDIO_KEYS.uiConfirm, this.app.settingsStore.getState());
   }
 
   private cycleCombatStyle(cursor: PlayerSelectionState, side: 'p1' | 'p2'): void {
     if (this.transitioning || cursor.locked) {
       return;
+    }
+    if (side === 'p2') {
+      this.p2StyleTouched = true;
     }
     const idx = COMBAT_STYLES.findIndex((s) => s.id === cursor.style.combat);
     const nextIdx = Phaser.Math.Wrap(idx + 1, 0, COMBAT_STYLES.length);
@@ -970,12 +1073,21 @@ export class CharacterSelectScene extends BaseScene {
       return;
     }
 
-    // In 1v1, hovering updates whichever unlocked player isn't blocked by the other's card
-    if (!this.p1.locked && index !== this.p2.index) {
+    // In 1v1, hovering updates P1 while unlocked (bumping unlocked P2 off the card
+    // so card #1 isn't blocked from mouse selection), otherwise P2.
+    if (!this.p1.locked) {
+      if (index === this.p2.index) {
+        if (this.p2.locked) {
+          return;
+        }
+        this.p2.index = Phaser.Math.Wrap(index + 1, 0, this.roster.length);
+        this.refreshCursor(this.p2);
+        this.refreshPanel('p2');
+      }
       this.p1.index = index;
       this.refreshCursor(this.p1);
       this.refreshPanel('p1');
-    } else if (this.p1.locked && !this.p2.locked && index !== this.p1.index) {
+    } else if (!this.p2.locked && index !== this.p1.index) {
       this.p2.index = index;
       this.refreshCursor(this.p2);
       this.refreshPanel('p2');
@@ -998,7 +1110,15 @@ export class CharacterSelectScene extends BaseScene {
     }
 
     // In 1v1, allow mouse click to select & lock whichever unlocked side clicked
-    if (!this.p1.locked && index !== this.p2.index) {
+    if (!this.p1.locked) {
+      if (index === this.p2.index) {
+        if (this.p2.locked) {
+          return;
+        }
+        this.p2.index = Phaser.Math.Wrap(index + 1, 0, this.roster.length);
+        this.refreshCursor(this.p2);
+        this.refreshPanel('p2');
+      }
       this.p1.index = index;
       this.refreshCursor(this.p1);
       this.refreshPanel('p1');

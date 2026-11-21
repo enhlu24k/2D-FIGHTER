@@ -61,6 +61,16 @@ export interface MatchHudConfig {
   depth: number;
 }
 
+interface ComboWidget {
+  container: Phaser.GameObjects.Container;
+  countText: Phaser.GameObjects.Text;
+  subText: Phaser.GameObjects.Text;
+  barFill: Phaser.GameObjects.Rectangle;
+  barWidth: number;
+  originX: 0 | 1;
+  lastHits: number;
+}
+
 /**
  * The in-match heads-up display built from the fighting UI atlas: portrait
  * frames, color-coded health bars, a centre timer, name plates, and round-win
@@ -84,15 +94,21 @@ export class MatchHud {
   private p2Meter!: Phaser.GameObjects.Rectangle;
   private p1MeterGeom!: MeterGeometry;
   private p2MeterGeom!: MeterGeometry;
+  private p1MeterStatus!: Phaser.GameObjects.Text;
+  private p2MeterStatus!: Phaser.GameObjects.Text;
   private p1MeterReady = false;
   private p2MeterReady = false;
   private p1MeterGlow: Phaser.Tweens.Tween | null = null;
   private p2MeterGlow: Phaser.Tweens.Tween | null = null;
+  private p1NeedUntil = 0;
+  private p2NeedUntil = 0;
 
   private p1Frac = 1;
   private p2Frac = 1;
   private p1Blink: Phaser.Tweens.Tween | null = null;
   private p2Blink: Phaser.Tweens.Tween | null = null;
+  private p1Combo!: ComboWidget;
+  private p2Combo!: ComboWidget;
 
   /**
    * @param scene - The owning match scene.
@@ -134,6 +150,11 @@ export class MatchHud {
     this.buildStyleBadge('left', p1HealthX, meterY + METER_DISP_H + 6, this.config.p1Style);
     this.buildStyleBadge('right', p2HealthX + HEALTH_DISP_W, meterY + METER_DISP_H + 6, this.config.p2Style);
 
+    // --- Combo Hit Counters ---
+    const comboY = meterY + METER_DISP_H + 34;
+    this.p1Combo = this.buildComboWidget('left', p1HealthX, comboY);
+    this.p2Combo = this.buildComboWidget('right', p2HealthX + HEALTH_DISP_W, comboY);
+
     // --- Timer (centre) ---
     this.buildTimer(camWidth / 2);
 
@@ -159,7 +180,7 @@ export class MatchHud {
         : `${combat.label.toUpperCase()} · ${suit.label.toUpperCase()}`;
 
     const badge = this.scene.add
-      .text(edgeX, topY, text, {
+      .text(side === 'left' ? edgeX + 14 : edgeX - 14, topY, text, {
         color: combat.accentCss,
         fontFamily: 'monospace',
         fontStyle: 'bold',
@@ -168,7 +189,62 @@ export class MatchHud {
         padding: { x: 6, y: 2 }
       })
       .setOrigin(side === 'left' ? 0 : 1, 0);
-    this.root.add(badge);
+
+    const swatch = this.scene.add
+      .circle(side === 'left' ? edgeX + 6 : edgeX - 6, topY + 8, 4.5, suit.tint, 1)
+      .setStrokeStyle(1, 0xf8fafc, 0.6);
+
+    this.root.add([swatch, badge]);
+  }
+
+  private buildComboWidget(side: 'left' | 'right', edgeX: number, topY: number): ComboWidget {
+    const originX: 0 | 1 = side === 'left' ? 0 : 1;
+    const barWidth = 148;
+    const container = this.scene.add.container(edgeX, topY).setAlpha(0).setVisible(false);
+
+    const countText = this.scene.add
+      .text(0, 0, '2 HITS!', {
+        color: '#facc15',
+        fontFamily: 'monospace',
+        fontStyle: 'bold',
+        fontSize: '30px',
+        stroke: '#020617',
+        strokeThickness: 6
+      })
+      .setOrigin(originX, 0);
+
+    const subText = this.scene.add
+      .text(0, 34, 'DOUBLE · 16 DMG', {
+        color: '#e2e8f0',
+        fontFamily: 'monospace',
+        fontStyle: 'bold',
+        fontSize: '12px',
+        backgroundColor: 'rgba(9, 13, 22, 0.72)',
+        padding: { x: 6, y: 2 }
+      })
+      .setOrigin(originX, 0);
+
+    const barTrack = this.scene.add
+      .rectangle(0, 56, barWidth, 5, 0x0f172a, 0.85)
+      .setOrigin(originX, 0)
+      .setStrokeStyle(1, 0x334155, 1);
+
+    const barFill = this.scene.add
+      .rectangle(0, 56, barWidth, 5, 0xfacc15, 1)
+      .setOrigin(originX, 0);
+
+    container.add([countText, subText, barTrack, barFill]);
+    this.root.add(container);
+
+    return {
+      container,
+      countText,
+      subText,
+      barFill,
+      barWidth,
+      originX,
+      lastHits: 0
+    };
   }
 
   /**
@@ -192,12 +268,28 @@ export class MatchHud {
       .setOrigin(originX, 0);
     this.root.add(fill);
 
+    const statusOffsetX = side === 'left' ? edgeX + METER_DISP_W + 8 : edgeX - METER_DISP_W - 8;
+    const status = this.scene.add
+      .text(statusOffsetX, topY + METER_DISP_H / 2, '', {
+        color: '#facc15',
+        fontFamily: 'monospace',
+        fontStyle: 'bold',
+        fontSize: '11px',
+        stroke: '#020617',
+        strokeThickness: 4
+      })
+      .setOrigin(side === 'left' ? 0 : 1, 0.5)
+      .setVisible(false);
+    this.root.add(status);
+
     if (side === 'left') {
       this.p1Meter = fill;
       this.p1MeterGeom = geometry;
+      this.p1MeterStatus = status;
     } else {
       this.p2Meter = fill;
       this.p2MeterGeom = geometry;
+      this.p2MeterStatus = status;
     }
   }
 
@@ -398,6 +490,18 @@ export class MatchHud {
     this.renderMeter('right', Phaser.Math.Clamp(p2Frac, 0, 1));
   }
 
+  /** Briefly flashes a reminder when a player tries special before 100% meter. */
+  flashMeterInsufficient(side: 'left' | 'right'): void {
+    const now = this.scene.time.now;
+    const status = side === 'left' ? this.p1MeterStatus : this.p2MeterStatus;
+    if (side === 'left') {
+      this.p1NeedUntil = now + 900;
+    } else {
+      this.p2NeedUntil = now + 900;
+    }
+    status.setText('NEED 100% METER').setColor('#f87171').setVisible(true);
+  }
+
   /**
    * Renders one side's meter: width by fraction, colour + glow when full.
    * @param side - Which meter to render.
@@ -406,12 +510,30 @@ export class MatchHud {
   private renderMeter(side: 'left' | 'right', frac: number): void {
     const fill = side === 'left' ? this.p1Meter : this.p2Meter;
     const geometry = side === 'left' ? this.p1MeterGeom : this.p2MeterGeom;
+    const status = side === 'left' ? this.p1MeterStatus : this.p2MeterStatus;
     const ready = frac >= 1;
 
     fill.setDisplaySize(Math.max(0, geometry.width * frac), geometry.height);
     fill.setFillStyle(ready ? METER_READY_COLOR : METER_FILL_COLOR, 1);
     fill.setVisible(frac > 0);
     this.setMeterGlow(side, ready);
+
+    if (ready) {
+      const prompt =
+        side === 'left'
+          ? 'SPECIAL READY [V]'
+          : this.config.mode === '1vcpu'
+            ? 'CPU SPECIAL READY'
+            : 'SPECIAL READY [L]';
+      status.setText(prompt).setColor('#facc15').setVisible(true);
+    } else {
+      const needUntil = side === 'left' ? this.p1NeedUntil : this.p2NeedUntil;
+      if (this.scene.time.now < needUntil) {
+        status.setVisible(true);
+      } else {
+        status.setVisible(false);
+      }
+    }
   }
 
   /**
@@ -478,6 +600,68 @@ export class MatchHud {
   updateWins(p1Wins: number, p2Wins: number): void {
     this.p1Pips.forEach((pip, index) => pip.setFrame(index < p1Wins ? 'meter-pip-gold-1' : 'meter-pip-empty-1'));
     this.p2Pips.forEach((pip, index) => pip.setFrame(index < p2Wins ? 'meter-pip-gold-1' : 'meter-pip-empty-1'));
+  }
+
+  /**
+   * Updates one side's consecutive-hit combo counter banner and countdown bar.
+   * Displays when `hits >= 2` and fades cleanly when reset or expired.
+   */
+  setCombo(side: 'left' | 'right', hits: number, damage: number, remainingFrac: number): void {
+    const widget = side === 'left' ? this.p1Combo : this.p2Combo;
+    if (!widget) {
+      return;
+    }
+
+    if (hits < 2 || remainingFrac <= 0) {
+      if (widget.lastHits >= 2) {
+        widget.lastHits = 0;
+        this.scene.tweens.killTweensOf(widget.container);
+        this.scene.tweens.add({
+          targets: widget.container,
+          alpha: 0,
+          duration: 180,
+          ease: 'Cubic.Out',
+          onComplete: () => {
+            if (widget.lastHits < 2) {
+              widget.container.setVisible(false);
+            }
+          }
+        });
+      }
+      return;
+    }
+
+    const tierColor = hits >= 5 ? 0xfb7185 : hits >= 3 ? 0xfacc15 : 0x38bdf8;
+    const tierCss = hits >= 5 ? '#fb7185' : hits >= 3 ? '#facc15' : '#38bdf8';
+    const rankLabel =
+      hits >= 7 ? 'IPPON FURY!' : hits >= 5 ? 'FIERCE RUSH!' : hits >= 3 ? 'NICE COMBO!' : 'DOUBLE HIT!';
+
+    widget.countText.setText(`${hits} HITS!`).setColor(tierCss);
+    widget.subText.setText(`${rankLabel} · ${damage} DMG`);
+    widget.barFill.setFillStyle(tierColor, 1);
+    widget.barFill.setDisplaySize(Math.max(1, widget.barWidth * Phaser.Math.Clamp(remainingFrac, 0, 1)), 5);
+
+    if (hits !== widget.lastHits) {
+      widget.lastHits = hits;
+      this.scene.tweens.killTweensOf(widget.container);
+      widget.container.setVisible(true).setAlpha(1).setScale(1.24);
+      this.scene.tweens.add({
+        targets: widget.container,
+        scale: 1,
+        duration: 170,
+        ease: 'Back.Out'
+      });
+    }
+  }
+
+  /** Clears both combo counters immediately (round start / rematch). */
+  resetCombos(): void {
+    [this.p1Combo, this.p2Combo].forEach((widget) => {
+      if (!widget) return;
+      widget.lastHits = 0;
+      this.scene.tweens.killTweensOf(widget.container);
+      widget.container.setVisible(false).setAlpha(0).setScale(1);
+    });
   }
 
   /** Slides the HUD down into place from above (match start). */

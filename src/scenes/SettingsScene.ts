@@ -8,22 +8,30 @@ import {
 } from '../game/calmStyles';
 import { AUDIO_KEYS, playAudioCue } from '../game/core/audio';
 import { DEFAULT_SETTINGS } from '../game/settings';
-import { SCENE_KEYS } from '../game/types';
+import { SCENE_KEYS, type CpuDifficulty } from '../game/types';
 import { createTextButton, type TextButton } from '../game/ui';
 import { BaseScene } from './BaseScene';
 
-const ROW_COUNT = 6;
+const ROW_COUNT = 7;
+const DIFFICULTY_ORDER: CpuDifficulty[] = ['easy', 'normal', 'hard'];
+const DIFFICULTY_LABELS: Record<CpuDifficulty, string> = {
+  easy: 'Easy',
+  normal: 'Normal',
+  hard: 'Hard'
+};
 
 export class SettingsScene extends BaseScene {
   private sfxValue!: Phaser.GameObjects.Text;
   private musicValue!: Phaser.GameObjects.Text;
   private muteValue!: Phaser.GameObjects.Text;
+  private difficultyValue!: Phaser.GameObjects.Text;
 
   private sfxDownButton!: TextButton;
   private sfxUpButton!: TextButton;
   private musicDownButton!: TextButton;
   private musicUpButton!: TextButton;
   private muteButton!: TextButton;
+  private difficultyButton!: TextButton;
   private resetButton!: TextButton;
   private backButton!: TextButton;
 
@@ -57,11 +65,11 @@ export class SettingsScene extends BaseScene {
     this.markActiveScene(SCENE_KEYS.Settings);
     this.cameras.main.setBackgroundColor(0x0b1220);
     this.mountCalmBackdrop(undefined, 0.34);
-    this.createHeading('Settings', 'Audio & Realistic Dojo Background');
+    this.createHeading('Settings', 'Audio, Difficulty & Dojo Background');
 
     const { centerX, centerY, width, height } = this.cameras.main;
-    const panel = this.add.image(centerX, centerY + 12, 'ui-panel');
-    panel.setDisplaySize(660, 536);
+    const panel = this.add.image(centerX, centerY + 14, 'ui-panel');
+    panel.setDisplaySize(660, 560);
 
     const leftX = centerX - 275;
     const labelStyle: Phaser.Types.GameObjects.Text.TextStyle = {
@@ -71,17 +79,18 @@ export class SettingsScene extends BaseScene {
       fontSize: '20px'
     };
 
-    const rowY = [176, 238, 300, 370, 466, 532];
+    const rowY = [164, 222, 280, 338, 404, 488, 548];
     const halfBtnW = 128;
-    const smallBtnH = 48;
+    const smallBtnH = 44;
 
     this.sfxValue = this.add.text(leftX, rowY[0], '', labelStyle).setOrigin(0, 0.5);
     this.musicValue = this.add.text(leftX, rowY[1], '', labelStyle).setOrigin(0, 0.5);
     this.muteValue = this.add.text(leftX, rowY[2], '', labelStyle).setOrigin(0, 0.5);
+    this.difficultyValue = this.add.text(leftX, rowY[3], '', labelStyle).setOrigin(0, 0.5);
 
-    this.add.text(leftX, rowY[3] - 9, 'Dojo Setting', labelStyle).setOrigin(0, 0.5);
+    this.add.text(leftX, rowY[4] - 9, 'Dojo Setting', labelStyle).setOrigin(0, 0.5);
     this.dojoSubtitle = this.add
-      .text(leftX, rowY[3] + 15, '', {
+      .text(leftX, rowY[4] + 15, '', {
         color: '#94a3b8',
         fontFamily: 'monospace',
         fontSize: '12px'
@@ -138,11 +147,21 @@ export class SettingsScene extends BaseScene {
       onHover: () => this.setSelection(2)
     });
 
+    this.difficultyButton = createTextButton(this, {
+      x: centerX + 123,
+      y: rowY[3],
+      width: 270,
+      height: smallBtnH,
+      label: 'Cycle difficulty',
+      onClick: () => this.cycleDifficulty(1),
+      onHover: () => this.setSelection(3)
+    });
+
     // Interactive Realistic Dojo Background Dropdown
     const dropX = centerX + 123;
-    const dropY = rowY[3];
+    const dropY = rowY[4];
     const dropW = 290;
-    const dropH = 48;
+    const dropH = 46;
 
     this.dojoTriggerBg = this.add
       .rectangle(dropX, dropY, dropW, dropH, 0x0f172a, 0.96)
@@ -175,10 +194,10 @@ export class SettingsScene extends BaseScene {
       .setDepth(21);
 
     this.dojoTriggerBg.on('pointerover', () => {
-      this.setSelection(3);
+      this.setSelection(4);
     });
     this.dojoTriggerBg.on('pointerdown', () => {
-      this.setSelection(3);
+      this.setSelection(4);
       this.toggleDropdown();
     });
 
@@ -191,8 +210,8 @@ export class SettingsScene extends BaseScene {
     this.dropdownBackdrop.on('pointerdown', () => this.closeDropdown());
 
     this.dropdownContainer = this.add.container(dropX, dropY + dropH / 2 + 4).setDepth(200).setVisible(false);
-    const listItemH = 34;
-    const listPad = 6;
+    const listItemH = 27;
+    const listPad = 4;
     const listHeight = CALM_BACKGROUNDS.length * listItemH + listPad * 2;
 
     const listBg = this.add
@@ -210,7 +229,7 @@ export class SettingsScene extends BaseScene {
         .text(-dropW / 2 + 34, itemY, bgDef.label, {
           color: '#e2e8f0',
           fontFamily: 'monospace',
-          fontSize: '14px',
+          fontSize: '13px',
           fontStyle: 'bold'
         })
         .setOrigin(0, 0.5);
@@ -242,22 +261,22 @@ export class SettingsScene extends BaseScene {
 
     this.resetButton = createTextButton(this, {
       x: centerX,
-      y: rowY[4],
+      y: rowY[5],
       width: 320,
-      height: 52,
+      height: 48,
       label: 'Reset defaults',
       onClick: () => this.resetAllDefaults(),
-      onHover: () => this.setSelection(4)
+      onHover: () => this.setSelection(5)
     });
 
     this.backButton = createTextButton(this, {
       x: centerX,
-      y: rowY[5],
+      y: rowY[6],
       width: 320,
-      height: 52,
+      height: 48,
       label: 'Back to menu',
       onClick: () => this.goToMenu(),
-      onHover: () => this.setSelection(5)
+      onHover: () => this.setSelection(6)
     });
 
     this.setSelection(0);
@@ -276,6 +295,13 @@ export class SettingsScene extends BaseScene {
         this.goToMenu();
       }
     });
+    this.input.keyboard?.on('keydown-BACKSPACE', () => {
+      if (this.dropdownOpen) {
+        this.closeDropdown();
+      } else {
+        this.goToMenu();
+      }
+    });
     this.input.keyboard?.on('keydown-ENTER', () => this.activateSelection());
     this.input.keyboard?.on('keydown-SPACE', () => this.activateSelection());
 
@@ -283,6 +309,7 @@ export class SettingsScene extends BaseScene {
       this.sfxValue.setText(`SFX Volume: ${Math.round(settings.sfxVolume * 100)}%`);
       this.musicValue.setText(`Music Vol:  ${Math.round(settings.musicVolume * 100)}%`);
       this.muteValue.setText(`Mute Audio: ${settings.muted ? 'On' : 'Off'}`);
+      this.difficultyValue.setText(`Difficulty: ${DIFFICULTY_LABELS[settings.difficulty]}`);
     });
     const unsubscribeCalm = calmStyleStore.subscribe(() => {
       this.refreshDojoDropdown();
@@ -294,7 +321,7 @@ export class SettingsScene extends BaseScene {
     });
 
     this.createFooterHint(
-      'Up/Down select • Left/Right adjust or cycle dojo • Click/Enter dropdown • Esc back'
+      'Up/Down select • Left/Right adjust or cycle difficulty/dojo • Click/Enter dropdown • Esc back'
     );
   }
 
@@ -322,6 +349,14 @@ export class SettingsScene extends BaseScene {
     this.dojoTriggerChevron.setText('▾');
   }
 
+  private cycleDifficulty(delta: number): void {
+    const current = this.app.settingsStore.getState().difficulty;
+    const idx = Math.max(0, DIFFICULTY_ORDER.indexOf(current));
+    const next = DIFFICULTY_ORDER[Phaser.Math.Wrap(idx + delta, 0, DIFFICULTY_ORDER.length)];
+    this.app.settingsStore.patchState({ difficulty: next });
+    playAudioCue(this, AUDIO_KEYS.uiConfirm, this.app.settingsStore.getState());
+  }
+
   private cycleDojoBackground(delta: number): void {
     const currentId = calmStyleStore.getState().backgroundId;
     const currentIndex = Math.max(
@@ -339,8 +374,8 @@ export class SettingsScene extends BaseScene {
     this.dojoTriggerLabel.setText(active.label);
     this.dojoSubtitle.setText(active.subtitle);
     this.dojoTriggerBg.setStrokeStyle(
-      this.selectedRow === 3 || this.dropdownOpen ? 2 : 1.5,
-      this.selectedRow === 3 || this.dropdownOpen ? active.accentHex : 0x475569,
+      this.selectedRow === 4 || this.dropdownOpen ? 2 : 1.5,
+      this.selectedRow === 4 || this.dropdownOpen ? active.accentHex : 0x475569,
       1
     );
 
@@ -389,8 +424,9 @@ export class SettingsScene extends BaseScene {
     this.musicDownButton.setSelected(index === 1);
     this.musicUpButton.setSelected(index === 1);
     this.muteButton.setSelected(index === 2);
-    this.resetButton.setSelected(index === 4);
-    this.backButton.setSelected(index === 5);
+    this.difficultyButton.setSelected(index === 3);
+    this.resetButton.setSelected(index === 5);
+    this.backButton.setSelected(index === 6);
     this.refreshDojoDropdown();
   }
 
@@ -400,14 +436,18 @@ export class SettingsScene extends BaseScene {
       return;
     }
     if (this.selectedRow === 3) {
-      this.toggleDropdown();
+      this.cycleDifficulty(1);
       return;
     }
     if (this.selectedRow === 4) {
-      this.resetAllDefaults();
+      this.toggleDropdown();
       return;
     }
     if (this.selectedRow === 5) {
+      this.resetAllDefaults();
+      return;
+    }
+    if (this.selectedRow === 6) {
       this.goToMenu();
     }
   }
@@ -426,6 +466,10 @@ export class SettingsScene extends BaseScene {
       return;
     }
     if (this.selectedRow === 3) {
+      this.cycleDifficulty(-1);
+      return;
+    }
+    if (this.selectedRow === 4) {
       this.cycleDojoBackground(-1);
     }
   }
@@ -444,6 +488,10 @@ export class SettingsScene extends BaseScene {
       return;
     }
     if (this.selectedRow === 3) {
+      this.cycleDifficulty(1);
+      return;
+    }
+    if (this.selectedRow === 4) {
       this.cycleDojoBackground(1);
     }
   }

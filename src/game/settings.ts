@@ -1,11 +1,12 @@
 import { STORAGE_KEY } from './constants';
 import { createStore, type Store } from './store';
-import type { GameSettings } from './types';
+import type { CpuDifficulty, GameSettings } from './types';
 
 export const DEFAULT_SETTINGS: GameSettings = {
   sfxVolume: 0.8,
   musicVolume: 0.55,
-  muted: false
+  muted: false,
+  difficulty: 'normal'
 };
 
 export function sanitizeSettings(raw: unknown): GameSettings {
@@ -17,7 +18,8 @@ export function sanitizeSettings(raw: unknown): GameSettings {
   return {
     sfxVolume: normalizeVolume(candidate?.sfxVolume, legacyVolume ?? DEFAULT_SETTINGS.sfxVolume),
     musicVolume: normalizeVolume(candidate?.musicVolume, legacyVolume ?? DEFAULT_SETTINGS.musicVolume),
-    muted: typeof candidate?.muted === 'boolean' ? candidate.muted : DEFAULT_SETTINGS.muted
+    muted: typeof candidate?.muted === 'boolean' ? candidate.muted : DEFAULT_SETTINGS.muted,
+    difficulty: normalizeDifficulty(candidate?.difficulty, DEFAULT_SETTINGS.difficulty)
   };
 }
 
@@ -51,4 +53,8 @@ export function createSettingsStore(storage: Storage = window.localStorage): Sto
 
 function normalizeVolume(value: unknown, fallback: number): number {
   return typeof value === 'number' && value >= 0 && value <= 1 ? value : fallback;
+}
+
+function normalizeDifficulty(value: unknown, fallback: CpuDifficulty): CpuDifficulty {
+  return value === 'easy' || value === 'normal' || value === 'hard' ? value : fallback;
 }

@@ -11,6 +11,7 @@ export class SplashScene extends BaseScene {
   }
 
   create(): void {
+    this.hasAdvanced = false;
     this.markActiveScene(SCENE_KEYS.Splash);
 
     const camera = this.cameras.main;

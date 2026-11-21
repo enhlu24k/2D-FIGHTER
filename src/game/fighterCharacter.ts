@@ -229,28 +229,33 @@ function requireSheet(sheets: SpritesheetAsset[], key: string): SpritesheetAsset
  * @param frameHeight - Spritesheet frame height.
  */
 export function collisionBounds(visual: Rect, frameWidth = FRAME_WIDTH, frameHeight = FRAME_HEIGHT): Rect {
-  const width = Math.min(58, Math.max(34, Math.round(visual.width * 0.46)));
-  const height = Math.max(74, Math.round(visual.height * 0.82));
+  const width = Math.min(82, Math.max(46, Math.round(visual.width * 0.64)));
+  const height = Math.max(76, Math.round(visual.height * 0.84));
+  const bottom = Math.min(frameHeight, Math.max(height, visual.y + visual.height));
 
   return {
     x: Math.round(frameWidth / 2 - width / 2),
-    y: Math.round(frameHeight * 0.9 - height),
+    y: Math.round(bottom - height),
     width,
     height
   };
 }
 
 /**
- * Derive a slightly padded hurtbox from a visual box.
+ * Derive a hurtbox that hugs the character silhouette cleanly with a minimal
+ * edge trim so grazing empty air corners does not trigger phantom hits while
+ * the full body, head, shoulders, and stance legs remain accurately hittable.
  * @param visual - The visual bounding box.
  * @param frameWidth - Spritesheet frame width.
  * @param frameHeight - Spritesheet frame height.
  */
 export function hitBounds(visual: Rect, frameWidth = FRAME_WIDTH, frameHeight = FRAME_HEIGHT): Rect {
-  return {
-    x: Math.max(0, visual.x - 4),
-    y: Math.max(0, visual.y + 2),
-    width: Math.min(frameWidth, visual.width + 8),
-    height: Math.min(frameHeight, visual.height)
-  };
+  const insetX = Math.min(4, Math.floor(visual.width * 0.035));
+  const insetTop = Math.min(4, Math.floor(visual.height * 0.025));
+  const x = Math.max(0, Math.min(frameWidth - 16, visual.x + insetX));
+  const y = Math.max(0, Math.min(frameHeight - 16, visual.y + insetTop));
+  const width = Math.max(24, Math.min(frameWidth - x, visual.width - insetX * 2));
+  const height = Math.max(32, Math.min(frameHeight - y, visual.height - insetTop - 2));
+
+  return { x, y, width, height };
 }

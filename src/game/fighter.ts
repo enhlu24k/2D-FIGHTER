@@ -3,7 +3,6 @@ import * as Phaser from 'phaser';
 import type { AppContext } from './context';
 import {
   getCombatStyleDefinition,
-  getSuitStyleDefinition,
   type CombatStyleDefinition
 } from './calmStyles';
 import { FIGHTER_BOUNDS_FIELDS, getAttackProfile, getFighterCombat, getFighterStats } from './fighterConfig';
@@ -16,7 +15,9 @@ import {
   type HeroAnimationDefinition,
   type HeroBoundsFrame
 } from './hero';
-import { spawnChargeAura, spawnDustPuff } from './vfx';
+import { getMartialCharacterMeta, type MartialDiscipline } from './martialRoster';
+import { ensureUniformCharacterAnimations } from './martialSprites';
+import { spawnChargeAura, spawnDisciplineSpecialFx, spawnDustPuff, spawnVictoryBurst } from './vfx';
 import type {
   AttackKind,
   AttackProfile,
@@ -38,17 +39,16 @@ const BLOCKSTUN_SECONDS = 0.14;
 /** Full meter value; a special requires (and consumes) a full bar. */
 const METER_MAX = 100;
 /** Meter gained by the attacker when a normal attack lands. */
-const METER_GAIN_ON_HIT = 12;
+const METER_GAIN_ON_HIT = 25;
 /** Meter gained by the defender when taking a hit. */
-const METER_GAIN_ON_TAKE = 7;
+const METER_GAIN_ON_TAKE = 16;
 /** Meter gained by both sides on a blocked hit. */
-const METER_GAIN_ON_BLOCK = 4;
+const METER_GAIN_ON_BLOCK = 9;
 /**
- * After the charge wind-up completes, the fighter holds the charged pose for this
- * long before the special executes — the "super freeze" that lets the cut-in
- * cinematic land before the move launches.
+ * Brief pause after the charge wind-up so the super cut-in peaks cleanly
+ * before the move launches.
  */
-const SUPER_FREEZE_MS = 360;
+const SUPER_FREEZE_MS = 180;
 
 /**
  * A live attack from a fighter on its current animation frame: the world-space
@@ -69,7 +69,7 @@ const BOUNDS_ALPHA_INACTIVE = 0.28;
 // Frame pixels between the anchor baseline (frame bottom, ~255) and the visible
 // feet. Used to seat the ground shadow under the feet rather than the padded
 // frame bottom, so fighters don't appear to float above their shadow.
-const SHADOW_FOOT_OFFSET = 24;
+const SHADOW_FOOT_OFFSET = 26;
 
 const BOUNDS_COLORS: Record<keyof FighterBoundsVisibility, number> = Object.fromEntries(
   FIGHTER_BOUNDS_FIELDS.map((field) => [field.id, Number.parseInt(field.color.slice(1), 16)])
@@ -117,6 +117,7 @@ interface FighterActionKeys {
   specialCharge: string;
   special: string;
   knockdown: string;
+  victory: string;
 }
 
 /**
@@ -137,9 +138,13 @@ export interface FighterOptions {
   style?: FighterStyleSelection;
   /**
    * Invoked the moment a meter special begins (the charge wind-up). Hosts use it
-   * to trigger the super cut-in cinematic.
+   * to trigger the super cut-in cinematic and brief super-freeze.
    */
   onSpecialStart?: (fighter: Fighter) => void;
+  /** Invoked when special is pressed before meter reaches 100%. */
+  onSpecialDenied?: (fighter: Fighter) => void;
+  /** Optional resolver returning opponent X so special gap-closers track cleanly. */
+  getOpponentX?: () => number;
 }
 
 /**
@@ -178,6 +183,7 @@ export class Fighter {
   private stunBlockLow = false;
   private knockbackVel = 0;
   private defeated = false;
+  private victorious = false;
   private attackId = 0;
   private attackConnected = true;
   // Multi-hit: each contiguous run of attack-active frames is one hit window.
@@ -186,18 +192,29 @@ export class Fighter {
   private attackActiveLast = false;
   private meter = 0;
   private appliedScale = 0;
+  private actionEpoch = 0;
+  private specialFreezeTimer?: Phaser.Time.TimerEvent;
+  private flashTimer?: Phaser.Time.TimerEvent;
   private readonly hasSpecial: boolean;
+  private readonly discipline: MartialDiscipline;
   private readonly combatStyle: CombatStyleDefinition;
-  private readonly suitTint: number;
+  private readonly animSuffix: string;
   private readonly onSpecialStart?: (fighter: Fighter) => void;
+  private readonly onSpecialDenied?: (fighter: Fighter) => void;
+  private readonly getOpponentX?: () => number;
+  private specialArmor = false;
+  private lastSpecialDeniedAt = -1000;
 
   constructor(options: FighterOptions) {
     this.scene = options.scene;
     this.app = options.app;
     this.onSpecialStart = options.onSpecialStart;
+    this.onSpecialDenied = options.onSpecialDenied;
+    this.getOpponentX = options.getOpponentX;
     this.combatStyle = getCombatStyleDefinition(options.style?.combat);
-    this.suitTint = getSuitStyleDefinition(options.style?.suit).tint;
     this.character = getCharacterDefinition(options.characterId);
+    this.discipline = getMartialCharacterMeta(this.character.id).discipline;
+    this.animSuffix = ensureUniformCharacterAnimations(this.scene, this.character.id, options.style?.suit);
     this.facing = options.facing;
     this.minX = options.minX;
     this.maxX = options.maxX;
@@ -208,6 +225,16 @@ export class Fighter {
     this.maxHealth = this.combat().maxHealth;
     this.health = this.maxHealth;
     this.build(options.depth ?? 5);
+  }
+
+  /** Whether this fighter competes in Judo (grappling throws & sweeps). */
+  get isJudo(): boolean {
+    return this.discipline === 'judo';
+  }
+
+  /** Whether this fighter is currently invulnerable inside a special attack. */
+  get isSpecialInvulnerable(): boolean {
+    return this.specialArmor;
   }
 
   /** The fighter's id. */
@@ -223,6 +250,11 @@ export class Fighter {
   /** The fighter's current horizontal centre in world pixels. */
   get x(): number {
     return this.posX;
+  }
+
+  /** The fighter's current vertical ground/air position in world pixels. */
+  get y(): number {
+    return this.sprite?.y ?? this.groundY;
   }
 
   /** The direction the fighter is facing (+1 right, -1 left). */
@@ -313,7 +345,7 @@ export class Fighter {
 
     this.appliedScale = scale;
     this.sprite.setScale(scale);
-    this.shadow.setSize(Math.round(107 * scale), Math.round(24 * scale));
+    this.shadow.setSize(Math.round(84 * scale), Math.round(18 * scale));
     this.shadow.y = this.groundY - SHADOW_FOOT_OFFSET * scale;
     this.updateShadow();
   }
@@ -380,6 +412,18 @@ export class Fighter {
   }
 
   /**
+   * Shifts the fighter horizontally within its current stage/camera walls and
+   * returns the actual delta applied (used for body-to-body pushbox separation).
+   */
+  nudgeX(dx: number): number {
+    const prev = this.posX;
+    this.posX = Phaser.Math.Clamp(prev + dx, this.minX, this.maxX);
+    this.sprite.x = this.posX;
+    this.shadow.x = this.posX;
+    return this.posX - prev;
+  }
+
+  /**
    * The fighter's currently active attack (if any): present only while a strike
    * animation is on an attack-active frame and the swing hasn't connected yet.
    */
@@ -425,16 +469,14 @@ export class Fighter {
    * @param blocked - Whether the hit was blocked.
    */
   flashHit(blocked: boolean): void {
+    this.flashTimer?.remove(false);
     this.sprite.setTint(blocked ? 0x93c5fd : 0xff7a7a);
-    this.scene.time.delayedCall(100, () => {
-      if (!this.sprite) {
+    this.flashTimer = this.scene.time.delayedCall(100, () => {
+      this.flashTimer = undefined;
+      if (!this.sprite || !this.sprite.scene) {
         return;
       }
-      if (this.suitTint !== 0xffffff) {
-        this.sprite.setTint(this.suitTint);
-      } else {
-        this.sprite.clearTint();
-      }
+      this.restoreBaseTint();
     });
   }
 
@@ -483,8 +525,14 @@ export class Fighter {
    * @param attackerFacing - The attacker's facing (push direction).
    * @param blocked - Whether the defender guarded the attack.
    */
-  applyHit(profile: AttackProfile, attackerFacing: 1 | -1, blocked: boolean): void {
-    if (this.defeated) {
+  applyHit(
+    profile: AttackProfile,
+    attackerFacing: 1 | -1,
+    blocked: boolean,
+    isThrow = false,
+    isFinisher = false
+  ): void {
+    if (this.defeated || this.specialArmor) {
       return;
     }
 
@@ -501,32 +549,81 @@ export class Fighter {
     this.knockbackVel = attackerFacing * profile.knockback;
 
     if (this.health <= 0) {
+      this.actionEpoch += 1;
+      this.clearActionTimers();
       this.defeated = true;
       this.locked = true;
       this.grounded = true;
+      this.specialArmor = false;
       this.velocityX = 0;
       this.stunIsBlock = false;
       this.hitstunTimer = 0;
-      spawnDustPuff(this.scene, this.posX, this.groundY - 12, 0, 5);
+      if (isThrow) {
+        this.playThrowArc(isFinisher ? 54 : 34, isFinisher ? 170 : 125, isFinisher ? 6 : 5);
+      } else {
+        spawnDustPuff(this.scene, this.posX, this.groundY - 12, 0, 5);
+      }
       this.playState(this.actionKeys.knockdown, false);
       return;
     }
 
+    this.actionEpoch += 1;
+    this.clearActionTimers();
     this.stunIsBlock = false;
     this.locked = false;
     this.velocityX = 0;
-    this.hitstunTimer = profile.hitstun / 1000;
+    const throwArcDur = isFinisher ? 150 : 115;
+    this.hitstunTimer = isThrow
+      ? Math.max(profile.hitstun / 1000, (throwArcDur * 2 + 40) / 1000)
+      : profile.hitstun / 1000;
     this.currentAnimKey = '';
+    if (isThrow) {
+      this.playThrowArc(isFinisher ? 48 : 28, throwArcDur, isFinisher ? 5 : 3);
+    } else if (this.sprite?.scene) {
+      this.scene.tweens.killTweensOf(this.sprite);
+      this.sprite.y = this.groundY;
+      this.updateShadow();
+    }
     this.playState(this.actionKeys.hitHigh, false);
+  }
+
+  private playThrowArc(lift: number, duration: number, dustCount: number): void {
+    if (!this.sprite?.scene) {
+      return;
+    }
+    this.scene.tweens.killTweensOf(this.sprite);
+    this.sprite.y = this.groundY;
+    this.scene.tweens.add({
+      targets: this.sprite,
+      y: this.groundY - lift,
+      duration,
+      ease: 'Cubic.Out',
+      yoyo: true,
+      onUpdate: () => this.updateShadow(),
+      onComplete: () => {
+        if (this.sprite?.scene) {
+          this.sprite.y = this.groundY;
+          this.updateShadow();
+          spawnDustPuff(this.scene, this.posX, this.groundY - 12, 0, dustCount);
+        }
+      }
+    });
   }
 
   /**
    * Resets the fighter for a new round: restores health, repositions and faces,
    * clears combat state, and re-freezes until the round intro releases it.
+   * Special meter carries across rounds unless `resetMeter` is true (rematch).
    * @param x - The spawn x position.
    * @param facing - The spawn facing direction.
+   * @param resetMeter - Whether to also zero the special meter.
    */
-  resetForRound(x: number, facing: 1 | -1): void {
+  resetForRound(x: number, facing: 1 | -1, resetMeter = false): void {
+    this.actionEpoch += 1;
+    this.clearActionTimers();
+    this.flashTimer?.remove(false);
+    this.flashTimer = undefined;
+
     this.posX = Phaser.Math.Clamp(x, this.minX, this.maxX);
     this.facing = facing;
     this.maxHealth = this.combat().maxHealth;
@@ -535,7 +632,9 @@ export class Fighter {
     this.velocityY = 0;
     this.grounded = true;
     this.locked = false;
+    this.specialArmor = false;
     this.defeated = false;
+    this.victorious = false;
     this.frozen = true;
     this.hitstunTimer = 0;
     this.stunIsBlock = false;
@@ -543,13 +642,69 @@ export class Fighter {
     this.knockbackVel = 0;
     this.attackConnected = true;
     this.attackActiveLast = false;
-    this.meter = 0;
+    if (resetMeter) {
+      this.meter = 0;
+    }
     this.currentAnimKey = '';
     this.currentReverse = false;
 
+    this.scene.tweens.killTweensOf(this.sprite);
     this.sprite.setPosition(this.posX, this.groundY).setScale(this.appliedScale).setFlipX(this.facing === 1);
+    this.restoreBaseTint();
     this.playState(this.actionKeys.idle, true);
     this.updateShadow();
+  }
+
+  /**
+   * Triggers the post-match victory celebration: loops the character's
+   * triumphant victory animation, performs a celebratory hop, and emits golden
+   * victory rings & confetti sparks.
+   */
+  playVictory(accentColor = 0xfacc15): void {
+    if (this.defeated) {
+      return;
+    }
+
+    this.actionEpoch += 1;
+    this.clearActionTimers();
+    this.flashTimer?.remove(false);
+    this.flashTimer = undefined;
+
+    this.victorious = true;
+    this.frozen = false;
+    this.locked = true;
+    this.grounded = true;
+    this.velocityX = 0;
+    this.velocityY = 0;
+    this.knockbackVel = 0;
+    this.hitstunTimer = 0;
+    this.attackConnected = true;
+    this.currentAnimKey = '';
+    this.currentReverse = false;
+
+    this.scene.tweens.killTweensOf(this.sprite);
+    this.sprite.setPosition(this.posX, this.groundY).setScale(this.appliedScale);
+    this.restoreBaseTint();
+    this.playState(this.actionKeys.victory, true);
+
+    spawnVictoryBurst(this.scene, this.posX, this.groundY - 96, accentColor);
+    spawnDustPuff(this.scene, this.posX, this.groundY - 12, 0, 5);
+
+    this.scene.tweens.add({
+      targets: this.sprite,
+      y: this.groundY - 22,
+      duration: 210,
+      ease: 'Cubic.Out',
+      yoyo: true,
+      repeat: 1,
+      onUpdate: () => this.updateShadow(),
+      onComplete: () => {
+        if (this.sprite && this.sprite.scene) {
+          this.sprite.y = this.groundY;
+          this.updateShadow();
+        }
+      }
+    });
   }
 
   /**
@@ -566,8 +721,19 @@ export class Fighter {
       return;
     }
 
+    if (this.victorious) {
+      this.playState(this.actionKeys.victory, true);
+      this.updateShadow();
+      this.drawBoundsOverlay();
+      return;
+    }
+
     if (this.frozen) {
-      this.playState(this.actionKeys.idle, true);
+      if (!this.grounded) {
+        this.updateAirborne(seconds, NEUTRAL_FIGHTER_INPUT);
+      } else {
+        this.playState(this.actionKeys.idle, true);
+      }
       this.drawBoundsOverlay();
       return;
     }
@@ -595,16 +761,38 @@ export class Fighter {
 
     if (!this.grounded) {
       this.updateAirborne(seconds, input);
+    } else if (
+      input.special &&
+      this.isMeterReady &&
+      (!this.locked ||
+        this.currentAnimKey === this.actionKeys.lightPunch ||
+        this.currentAnimKey === this.actionKeys.heavy)
+    ) {
+      // Allow both neutral special activation and special-canceling out of normals!
+      this.velocityX = 0;
+      this.startSpecial();
     } else if (!this.locked) {
       this.updateGrounded(seconds, input);
+    }
+
+    if (this.grounded && input.special && !this.isMeterReady && !this.specialArmor) {
+      const now = this.scene.time.now;
+      if (now - this.lastSpecialDeniedAt > 450) {
+        this.lastSpecialDeniedAt = now;
+        this.onSpecialDenied?.(this);
+      }
     }
 
     this.updateAttackWindow();
     this.drawBoundsOverlay();
   }
 
-  /** Destroys the fighter's display objects. */
+  /** Destroys the fighter's display objects and pending timers. */
   destroy(): void {
+    this.actionEpoch += 1;
+    this.clearActionTimers();
+    this.flashTimer?.remove(false);
+    this.flashTimer = undefined;
     this.sprite?.removeAllListeners();
     this.sprite?.destroy();
     this.shadow?.destroy();
@@ -635,7 +823,8 @@ export class Fighter {
         key('light-punch'),
       specialCharge: findCharacterAnimationKeyByAction(this.character.id, 'special-charge') ?? key('crouch'),
       special: findCharacterAnimationKeyByAction(this.character.id, 'special') ?? key('heavy-kick'),
-      knockdown: key('knockdown')
+      knockdown: key('knockdown'),
+      victory: findCharacterAnimationKeyByAction(this.character.id, 'victory') ?? key('idle')
     };
   }
 
@@ -688,9 +877,21 @@ export class Fighter {
     return null;
   }
 
+  private resolvedPlayKey(animKey: string): string {
+    return this.animSuffix ? `${animKey}${this.animSuffix}` : animKey;
+  }
+
+  private canonicalAnimKey(playKey: string): string {
+    if (this.animSuffix && playKey.endsWith(this.animSuffix)) {
+      return playKey.slice(0, -this.animSuffix.length);
+    }
+    return playKey;
+  }
+
   /** The fighter's active animation definition, or null when none is playing. */
   private currentAnimation(): HeroAnimationDefinition | null {
-    const animKey = this.sprite.anims.currentAnim?.key ?? this.currentAnimKey;
+    const rawKey = this.sprite.anims.currentAnim?.key ?? this.currentAnimKey;
+    const animKey = rawKey ? this.canonicalAnimKey(rawKey) : '';
     if (!animKey) {
       return null;
     }
@@ -731,24 +932,20 @@ export class Fighter {
       .ellipse(
         this.posX,
         this.groundY - SHADOW_FOOT_OFFSET * scale,
-        Math.round(107 * scale),
-        Math.round(24 * scale),
+        Math.round(84 * scale),
+        Math.round(18 * scale),
         0x000000,
         1
       )
-      .setAlpha(0.32)
+      .setAlpha(0.24)
       .setDepth(depth - 1);
 
     this.sprite = this.scene.add
-      .sprite(this.posX, this.groundY, this.actionKeys.idle, 0)
+      .sprite(this.posX, this.groundY, this.resolvedPlayKey(this.actionKeys.idle), 0)
       .setOrigin(0.5, this.character.anchor.y)
       .setScale(scale)
       .setFlipX(this.facing === 1)
       .setDepth(depth);
-
-    if (this.suitTint !== 0xffffff) {
-      this.sprite.setTint(this.suitTint);
-    }
 
     this.boundsGraphics = this.scene.add.graphics().setDepth(depth + 45);
 
@@ -887,7 +1084,10 @@ export class Fighter {
 
     // ignoreIfPlaying must be false so a forward->reverse switch on the same
     // key (reverse walk) is applied; the guard above prevents per-frame restarts.
-    const config: Phaser.Types.Animations.PlayAnimationConfig = { key: animKey, repeat: loop ? -1 : 0 };
+    const config: Phaser.Types.Animations.PlayAnimationConfig = {
+      key: this.resolvedPlayKey(animKey),
+      repeat: loop ? -1 : 0
+    };
     if (reverse) {
       this.sprite.playReverse(config, false);
     } else {
@@ -916,23 +1116,44 @@ export class Fighter {
     this.playState(this.actionKeys.walkBackward, true);
   }
 
+  private clearActionTimers(): void {
+    this.specialFreezeTimer?.remove(false);
+    this.specialFreezeTimer = undefined;
+    this.sprite?.removeAllListeners();
+  }
+
+  private restoreBaseTint(): void {
+    if (!this.sprite || !this.sprite.scene) {
+      return;
+    }
+    this.sprite.clearTint();
+  }
+
   /**
    * Plays a one-shot action that locks input until it completes, then returns
    * to idle.
    * @param animKey - The action animation key to play.
    */
   private startOneShot(animKey: string): void {
+    const epoch = ++this.actionEpoch;
+    this.clearActionTimers();
+
     this.locked = true;
     this.currentAnimKey = animKey;
     this.currentReverse = false;
     this.attackId += 1;
     this.attackConnected = false;
-    this.sprite.play({ key: animKey, repeat: 0 }, true);
-    this.sprite.once(`animationcomplete-${animKey}`, () => {
+    const playKey = this.resolvedPlayKey(animKey);
+    this.sprite.play({ key: playKey, repeat: 0 }, true);
+    this.sprite.once(`animationcomplete-${playKey}`, () => {
+      if (epoch !== this.actionEpoch || this.defeated || this.victorious || !this.sprite?.scene) {
+        return;
+      }
+
       this.locked = false;
       this.currentAnimKey = '';
 
-      if (this.grounded) {
+      if (this.grounded && !this.frozen) {
         this.playState(this.actionKeys.idle, true);
       }
     });
@@ -945,48 +1166,135 @@ export class Fighter {
    * hit window so the move lands a combo.
    */
   private startSpecial(): void {
+    const epoch = ++this.actionEpoch;
+    this.clearActionTimers();
+
     this.locked = true;
+    this.specialArmor = true;
     this.meter = 0;
     this.currentReverse = false;
     this.attackConnected = true;
     this.attackActiveLast = false;
 
+    // Face opponent on launch so special always fires forward
+    const opponentX = this.getOpponentX?.();
+    if (opponentX !== undefined && Math.abs(opponentX - this.posX) >= 8) {
+      this.facing = opponentX >= this.posX ? 1 : -1;
+      this.sprite.setFlipX(this.facing === 1);
+    }
+
     this.onSpecialStart?.(this);
-    spawnChargeAura(this.scene, this.sprite.x, this.sprite.y - this.sprite.displayHeight * 0.45);
+    spawnChargeAura(
+      this.scene,
+      this.sprite.x,
+      this.sprite.y - this.sprite.displayHeight * 0.45,
+      this.discipline === 'judo' ? 'blue' : 'red'
+    );
 
     this.currentAnimKey = this.actionKeys.specialCharge;
-    this.sprite.play({ key: this.actionKeys.specialCharge, repeat: 0 }, true);
-    this.sprite.once(`animationcomplete-${this.actionKeys.specialCharge}`, () => {
-      if (this.defeated) {
+    const chargePlayKey = this.resolvedPlayKey(this.actionKeys.specialCharge);
+    this.sprite.play({ key: chargePlayKey, repeat: 0 }, true);
+    this.sprite.once(`animationcomplete-${chargePlayKey}`, () => {
+      if (epoch !== this.actionEpoch || this.defeated || this.victorious || !this.sprite?.scene) {
         return;
       }
 
-      // Super freeze: hold the charged pose so the cut-in cinematic peaks before
-      // the move launches.
-      this.scene.time.delayedCall(SUPER_FREEZE_MS, () => {
-        if (!this.defeated) {
-          this.executeSpecial();
+      // Brief hold before executing so the cut-in flash lands right on impact.
+      this.specialFreezeTimer = this.scene.time.delayedCall(SUPER_FREEZE_MS, () => {
+        this.specialFreezeTimer = undefined;
+        if (epoch !== this.actionEpoch || this.defeated || this.victorious || !this.sprite?.scene) {
+          return;
         }
+        this.executeSpecial(epoch);
       });
     });
   }
 
   /**
-   * Launches the multi-hit special execution animation after the charge/super
-   * freeze, then returns to idle. Each attack-active span opens a fresh hit
-   * window so the move lands a combo.
+   * Advances forward toward the opponent without overshooting past them,
+   * keeping Judo clinch throws & Taekwondo barrages cleanly in range.
    */
-  private executeSpecial(): void {
+  private advanceTowardOpponent(maxStep: number, stopGap = 62): void {
+    const opponentX = this.getOpponentX?.();
+    if (opponentX === undefined) {
+      this.nudgeX(this.facing * maxStep);
+      return;
+    }
+    const delta = opponentX - this.posX;
+    const dist = Math.abs(delta);
+    if (dist <= stopGap) {
+      return;
+    }
+    const step = Math.min(maxStep, dist - stopGap);
+    this.nudgeX(Math.sign(delta) * step);
+  }
+
+  /**
+   * Launches the multi-hit special execution animation after the charge/super
+   * freeze, then returns to idle. Judo executes a grounded clinch lunge + mat
+   * slam; Taekwondo launches a leaping tornado kick barrage.
+   */
+  private executeSpecial(epoch: number): void {
     this.currentAnimKey = this.actionKeys.special;
     this.attackId += 1;
     this.attackConnected = false;
     this.attackActiveLast = false;
-    this.sprite.play({ key: this.actionKeys.special, repeat: 0 }, true);
-    this.sprite.once(`animationcomplete-${this.actionKeys.special}`, () => {
-      this.locked = false;
-      this.currentAnimKey = '';
 
-      if (this.grounded) {
+    spawnDisciplineSpecialFx(this.scene, this.posX, this.groundY, this.facing, this.discipline, 'launch');
+
+    if (this.discipline === 'judo') {
+      // Judo: explosive entry step into hip-throw drive & ground-slam shockwave
+      this.advanceTowardOpponent(95, 62);
+      this.scene.time.delayedCall(180, () => {
+        if (epoch === this.actionEpoch && !this.defeated && !this.victorious && this.sprite?.scene) {
+          this.advanceTowardOpponent(48, 60);
+        }
+      });
+      this.scene.time.delayedCall(340, () => {
+        if (epoch === this.actionEpoch && !this.defeated && !this.victorious && this.sprite?.scene) {
+          spawnDisciplineSpecialFx(this.scene, this.posX, this.groundY, this.facing, 'judo', 'climax');
+        }
+      });
+    } else {
+      // Taekwondo: rising airborne tornado hop while closing distance through the barrage
+      this.advanceTowardOpponent(82, 64);
+      this.scene.tweens.killTweensOf(this.sprite);
+      this.scene.tweens.add({
+        targets: this.sprite,
+        y: this.groundY - 26,
+        duration: 220,
+        ease: 'Cubic.Out',
+        yoyo: true,
+        onUpdate: () => this.updateShadow(),
+        onComplete: () => {
+          if (this.sprite && this.sprite.scene) {
+            this.sprite.y = this.groundY;
+            this.updateShadow();
+          }
+        }
+      });
+      this.scene.time.delayedCall(320, () => {
+        if (epoch === this.actionEpoch && !this.defeated && !this.victorious && this.sprite?.scene) {
+          this.advanceTowardOpponent(44, 62);
+          spawnDisciplineSpecialFx(this.scene, this.posX, this.groundY, this.facing, 'taekwondo', 'climax');
+        }
+      });
+    }
+
+    const specialPlayKey = this.resolvedPlayKey(this.actionKeys.special);
+    this.sprite.play({ key: specialPlayKey, repeat: 0 }, true);
+    this.sprite.once(`animationcomplete-${specialPlayKey}`, () => {
+      if (epoch !== this.actionEpoch || this.defeated || this.victorious || !this.sprite?.scene) {
+        return;
+      }
+
+      this.locked = false;
+      this.specialArmor = false;
+      this.currentAnimKey = '';
+      this.sprite.y = this.groundY;
+      this.updateShadow();
+
+      if (this.grounded && !this.frozen) {
         this.playState(this.actionKeys.idle, true);
       }
     });
@@ -1041,7 +1349,7 @@ export class Fighter {
     this.currentAnimKey = this.actionKeys.jump;
     this.currentReverse = false;
     spawnDustPuff(this.scene, this.posX, this.groundY - 12, 0, 3);
-    this.sprite.play({ key: this.actionKeys.jump, repeat: 0 }, true);
+    this.sprite.play({ key: this.resolvedPlayKey(this.actionKeys.jump), repeat: 0 }, true);
   }
 
   /** Realistic landing knee compression and subtle mat dust wisp. */
@@ -1073,7 +1381,8 @@ export class Fighter {
       return;
     }
 
-    const animKey = this.sprite.anims.currentAnim?.key ?? this.currentAnimKey;
+    const rawKey = this.sprite.anims.currentAnim?.key ?? this.currentAnimKey;
+    const animKey = rawKey ? this.canonicalAnimKey(rawKey) : '';
     if (!animKey) {
       return;
     }
@@ -1187,6 +1496,6 @@ export class Fighter {
 
     this.shadow.x = this.posX;
     this.shadow.setScale(1 - airborneLift * 0.45);
-    this.shadow.setAlpha(0.32 - airborneLift * 0.18);
+    this.shadow.setAlpha(0.24 - airborneLift * 0.14);
   }
 }

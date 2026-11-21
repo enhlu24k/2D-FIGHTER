@@ -26,7 +26,15 @@ export type MatchMode = '1v1' | '1vcpu';
 
 export type CombatStyleId = 'balanced' | 'rushdown' | 'powerhouse' | 'guardian';
 
-export type SuitStyleId = 'classic' | 'stealth' | 'cosmic';
+export type SuitStyleId =
+  | 'classic'
+  | 'pink'
+  | 'orange'
+  | 'black'
+  | 'grey'
+  | 'crimson'
+  | 'royal'
+  | 'gold';
 
 export type CalmBackgroundId =
   | 'dojo-tatami'
@@ -78,10 +86,13 @@ export interface GameProfileConfig {
   height: number;
 }
 
+export type CpuDifficulty = 'easy' | 'normal' | 'hard';
+
 export interface GameSettings {
   sfxVolume: number;
   musicVolume: number;
   muted: boolean;
+  difficulty: CpuDifficulty;
 }
 
 export interface InputSnapshot {

@@ -1,6 +1,7 @@
 import * as Phaser from 'phaser';
 
 import { getCharacterDefinition } from './hero';
+import { getMartialCharacterMeta } from './martialRoster';
 import type { VfxColor } from './vfx';
 
 /**
@@ -58,7 +59,9 @@ export interface SuperCutInOptions {
  * @returns The cut-in's total duration in milliseconds.
  */
 export function playSuperCutIn(scene: Phaser.Scene, options: SuperCutInOptions): number {
-  const color = COLOR[options.color ?? 'gold'];
+  const meta = getMartialCharacterMeta(options.characterId);
+  const resolvedColor = options.color ?? (meta.discipline === 'judo' ? 'blue' : 'red');
+  const color = COLOR[resolvedColor];
   const cam = scene.cameras.main;
   const width = cam.width;
   const height = cam.height;
@@ -109,12 +112,12 @@ export function playSuperCutIn(scene: Phaser.Scene, options: SuperCutInOptions):
   // 4) The big portrait slamming in from the side, masked into a trapezium.
   buildPortrait(scene, track, options, { width, height, fromLeft, color });
 
-  // 5) Character name caption, entering from the opposite side.
-  const captionFromX = fromLeft ? width + 200 : -200;
+  // 5) Character name + signature special caption, entering from the opposite side.
+  const captionFromX = fromLeft ? width + 220 : -220;
   const captionRestX = fromLeft ? width - 40 : 40;
   const caption = track(
     scene.add
-      .text(captionFromX, height * 0.5, getCharacterDefinition(options.characterId).label.toUpperCase(), {
+      .text(captionFromX, height * 0.47, getCharacterDefinition(options.characterId).label.toUpperCase(), {
         color: '#f8fafc',
         fontFamily: 'monospace',
         fontStyle: 'bold',
@@ -126,8 +129,27 @@ export function playSuperCutIn(scene: Phaser.Scene, options: SuperCutInOptions):
       .setScrollFactor(0)
       .setDepth(DEPTH_CAPTION)
   );
-  scene.tweens.add({ targets: caption, x: captionRestX, duration: SLIDE_IN_MS, ease: 'Back.Out' });
-  scene.tweens.add({ targets: caption, x: captionFromX, alpha: 0, delay: outDelay, duration: SLIDE_OUT_MS, ease: 'Back.In' });
+  const specialSub = track(
+    scene.add
+      .text(
+        captionFromX,
+        height * 0.55,
+        `${meta.discipline.toUpperCase()} · ${meta.specialName.toUpperCase()}`,
+        {
+          color: meta.discipline === 'judo' ? '#7dd3fc' : '#fda4af',
+          fontFamily: 'monospace',
+          fontStyle: 'bold',
+          fontSize: '18px',
+          stroke: '#05070d',
+          strokeThickness: 5
+        }
+      )
+      .setOrigin(fromLeft ? 1 : 0, 0.5)
+      .setScrollFactor(0)
+      .setDepth(DEPTH_CAPTION)
+  );
+  scene.tweens.add({ targets: [caption, specialSub], x: captionRestX, duration: SLIDE_IN_MS, ease: 'Back.Out' });
+  scene.tweens.add({ targets: [caption, specialSub], x: captionFromX, alpha: 0, delay: outDelay, duration: SLIDE_OUT_MS, ease: 'Back.In' });
 
   // 6) Cinematic letterbox bars framing the panel.
   const topBar = track(
